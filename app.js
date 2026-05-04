@@ -601,12 +601,12 @@
   async function loadData() {
     try {
       setLoadingStatus('Memuat data POI...', 35);
-      const poiRes = await fetch('/data/poi_dubai.json?v=2');
+      const poiRes = await fetch('public/data/poi_dubai.json?v=2');
       if (!poiRes.ok) throw new Error(`HTTP ${poiRes.status} saat memuat POI`);
       const poiData = await poiRes.json();
 
       setLoadingStatus('Memuat data bangunan...', 55);
-      const bldRes = await fetch('/data/bangunan_dubai.json?v=2');
+      const bldRes = await fetch('public/data/bangunan_dubai.json?v=2');
       if (!bldRes.ok) throw new Error(`HTTP ${bldRes.status} saat memuat Bangunan`);
       const bangunanData = await bldRes.json();
 
