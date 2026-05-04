@@ -147,40 +147,108 @@
   }
 
   // ────────────────────────────────────────────
-  //  WIKIPEDIA API
+  //  WIKIPEDIA API — Foto Bangunan Nyata
   // ────────────────────────────────────────────
-  async function fetchWikiData(query) {
-    try {
-      // Karena ini data Dubai, Wikipedia bahasa Inggris akan jauh lebih lengkap.
-      // Kita tambahkan kata "Dubai" agar pencarian lebih akurat (menghindari hasil acak).
-      const searchQuery = query.toLowerCase().includes('dubai') ? query : query + ' Dubai';
-      
-      let lang = 'en';
-      let url = `https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts|pageimages&exintro=1&explaintext=1&pithumbsize=400&generator=search&gsrsearch=${encodeURIComponent(searchQuery)}&gsrlimit=1`;
-      let res = await fetch(url);
-      let data = await res.json();
-      
-      // Fallback ke id.wikipedia jika tidak ada di en.wikipedia
-      if (!data.query || !data.query.pages || Object.keys(data.query.pages)[0] === "-1") {
-        lang = 'id';
-        url = `https://id.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts|pageimages&exintro=1&explaintext=1&pithumbsize=400&generator=search&gsrsearch=${encodeURIComponent(searchQuery)}&gsrlimit=1`;
-        res = await fetch(url);
-        data = await res.json();
-      }
 
-      if (data.query && data.query.pages) {
-        const pages = data.query.pages;
-        const pageId = Object.keys(pages)[0];
-        if (pageId !== "-1") {
-          return {
-            title: pages[pageId].title,
-            extract: pages[pageId].extract,
-            image: pages[pageId].thumbnail ? pages[pageId].thumbnail.source : null,
-            url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(pages[pageId].title)}`
-          };
+  // Kata kunci yang mengindikasikan logo/ikon, bukan foto nyata
+  const LOGO_BLACKLIST = ['logo', 'flag', 'icon', 'seal', 'coat', 'crest', 'emblem', 'insignia', 'symbol', 'map', '.svg', 'pictogram', 'sign'];
+
+  function isPhotoUrl(filename) {
+    const lower = filename.toLowerCase();
+    return !LOGO_BLACKLIST.some(kw => lower.includes(kw));
+  }
+
+  /**
+   * Ambil gambar terbaik (foto bangunan) dari halaman Wikipedia.
+   * Strategi:
+   *  1. Ambil daftar semua gambar di halaman via prop=images
+   *  2. Filter out logo/ikon/SVG
+   *  3. Resolve URL gambar via imageinfo API
+   *  4. Pilih gambar pertama yang valid
+   */
+  async function fetchWikiBuildingPhoto(pageTitle, lang = 'en') {
+    try {
+      // Step 1: ambil daftar gambar di halaman
+      const imagesUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=images&titles=${encodeURIComponent(pageTitle)}&imlimit=20`;
+      const imagesRes = await fetch(imagesUrl);
+      const imagesData = await imagesRes.json();
+
+      const pages = imagesData.query?.pages;
+      if (!pages) return null;
+
+      const page = Object.values(pages)[0];
+      const allImages = page?.images || [];
+
+      // Step 2: filter hanya gambar foto (bukan logo/svg/ikon)
+      const photoFiles = allImages
+        .map(img => img.title)
+        .filter(title => {
+          const lower = title.toLowerCase();
+          if (lower.endsWith('.svg')) return false;
+          return isPhotoUrl(title);
+        });
+
+      if (photoFiles.length === 0) return null;
+
+      // Step 3: resolve URL via imageinfo (ambil 5 kandidat sekaligus)
+      const candidates = photoFiles.slice(0, 5).join('|');
+      const infoUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=imageinfo&iiprop=url|size&titles=${encodeURIComponent(candidates)}&iiurlwidth=600`;
+      const infoRes = await fetch(infoUrl);
+      const infoData = await infoRes.json();
+
+      const infoPages = infoData.query?.pages;
+      if (!infoPages) return null;
+
+      // Step 4: pilih gambar pertama yang valid
+      for (const p of Object.values(infoPages)) {
+        const ii = p.imageinfo?.[0];
+        if (ii && ii.thumburl && ii.width > 100 && ii.height > 100) {
+          return ii.thumburl;
+        } else if (ii && ii.url) {
+          return ii.url;
         }
       }
       return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchWikiData(query) {
+    try {
+      const searchQuery = query.toLowerCase().includes('dubai') ? query : query + ' Dubai';
+      const lang = 'en';
+
+      // Step A: cari halaman Wikipedia
+      const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts|pageimages&exintro=1&explaintext=1&pithumbsize=600&generator=search&gsrsearch=${encodeURIComponent(searchQuery)}&gsrlimit=1`;
+      const res = await fetch(searchUrl);
+      const data = await res.json();
+
+      if (!data.query?.pages) return null;
+      const pages = data.query.pages;
+      const pageId = Object.keys(pages)[0];
+      if (pageId === '-1') return null;
+
+      const pageData = pages[pageId];
+      const pageTitle = pageData.title;
+      const wikiUrl = `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(pageTitle)}`;
+
+      // Step B: coba ambil foto bangunan nyata dari halaman
+      let bestPhoto = null;
+      const buildingPhoto = await fetchWikiBuildingPhoto(pageTitle, lang);
+      if (buildingPhoto) {
+        bestPhoto = buildingPhoto;
+      } else if (pageData.thumbnail?.source && isPhotoUrl(pageData.thumbnail.source)) {
+        // Fallback: pakai thumbnail dari pageimages jika bukan logo
+        bestPhoto = pageData.thumbnail.source;
+      }
+
+      return {
+        title: pageTitle,
+        extract: pageData.extract || null,
+        image: bestPhoto,
+        url: wikiUrl
+      };
     } catch (e) {
       return null;
     }
@@ -199,8 +267,11 @@
       <div class="popup-row"><span class="popup-label">Kategori</span><span class="popup-value">${catInfo.label || props.kategori || '-'}</span></div>
       <div class="popup-row"><span class="popup-label">Tipe</span><span class="popup-value">${props.kategori || '-'}</span></div>
       <div class="popup-row"><span class="popup-label">Koordinat</span><span class="popup-value">${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}</span></div>
-      <div id="wiki-container-${markerId}" class="wiki-container" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 12px;">
-        <div style="font-size: 0.8rem; color: var(--text-dim); text-align: center;">Mencari info di Wikipedia... ⏳</div>
+      <div id="wiki-container-${markerId}" class="wiki-container">
+        <div class="wiki-loading">
+          <div class="wiki-spinner"></div>
+          <span>Mencari foto di Wikipedia...</span>
+        </div>
       </div>
     </div>`;
   }
@@ -266,19 +337,29 @@
 
         container.dataset.loaded = 'true';
         if (wikiData) {
-          let html = '';
+          let html = '<div class="wiki-card">';
           if (wikiData.image) {
-            html += `<img src="${wikiData.image}" alt="${wikiData.title}" style="width:100%; border-radius:6px; margin-bottom:10px; max-height:180px; object-fit:cover;">`;
+            html += `<div class="wiki-photo-wrap">
+              <img 
+                src="${wikiData.image}" 
+                alt="Foto ${wikiData.title}" 
+                class="wiki-photo"
+                onerror="this.parentElement.style.display='none'"
+              >
+              <div class="wiki-photo-badge">📸 Wikipedia</div>
+            </div>`;
           }
+          html += `<div class="wiki-body">`;
+          html += `<div class="wiki-title">${wikiData.title}</div>`;
           if (wikiData.extract) {
-            const shortExtract = wikiData.extract.length > 200 ? wikiData.extract.substring(0, 200) + '...' : wikiData.extract;
-            html += `<div style="font-size:0.85rem; line-height: 1.5; color: var(--text-color);">${shortExtract} <br><a href="${wikiData.url}" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500; display:inline-block; margin-top:6px;">Baca lebih lanjut di Wikipedia &rarr;</a></div>`;
-          } else {
-             html += `<div style="font-size:0.85rem; line-height: 1.5; color: var(--text-color);"><a href="${wikiData.url}" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500;">Lihat di Wikipedia &rarr;</a></div>`;
+            const shortExtract = wikiData.extract.length > 220 ? wikiData.extract.substring(0, 220) + '...' : wikiData.extract;
+            html += `<p class="wiki-extract">${shortExtract}</p>`;
           }
+          html += `<a href="${wikiData.url}" target="_blank" class="wiki-link">Baca di Wikipedia &rarr;</a>`;
+          html += `</div></div>`;
           container.innerHTML = html;
         } else {
-          container.innerHTML = `<div style="font-size:0.8rem; color:var(--text-dim); text-align:center;">Info Wikipedia tidak ditemukan.</div>`;
+          container.innerHTML = `<div class="wiki-not-found">📭 Info Wikipedia tidak ditemukan.</div>`;
         }
       });
 
