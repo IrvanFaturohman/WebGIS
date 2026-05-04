@@ -1,6 +1,7 @@
 # Abaikan file data mentah yang sangat besar
 dubai_lagi.geojson
 clipping_boundary.geojson
+*.geojson
 
 # Abaikan folder/file konfigurasi lokal jika ada
 .vscode/
