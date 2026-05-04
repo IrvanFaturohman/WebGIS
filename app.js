@@ -601,13 +601,13 @@
   async function loadData() {
     try {
       setLoadingStatus('Memuat data POI...', 35);
-      const poiRes = await fetch('./data/poi_dubai.json?v=1', { cache: 'no-store' });
-      if (!poiRes.ok) throw new Error('Gagal memuat poi_dubai.json');
+      const poiRes = await fetch('/data/poi_dubai.json?v=2');
+      if (!poiRes.ok) throw new Error(`HTTP ${poiRes.status} saat memuat POI`);
       const poiData = await poiRes.json();
 
       setLoadingStatus('Memuat data bangunan...', 55);
-      const bldRes = await fetch('./data/bangunan_dubai.json?v=1', { cache: 'no-store' });
-      if (!bldRes.ok) throw new Error('Gagal memuat bangunan_dubai.json');
+      const bldRes = await fetch('/data/bangunan_dubai.json?v=2');
+      if (!bldRes.ok) throw new Error(`HTTP ${bldRes.status} saat memuat Bangunan`);
       const bangunanData = await bldRes.json();
 
       setLoadingStatus('Merender marker...', 70);
